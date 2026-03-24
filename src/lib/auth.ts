@@ -26,6 +26,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async signIn({ user, account }) {
+      console.log("[AUTH] signIn callback triggered for:", user.email)
       if (!account || !user.email) return false
       try {
         const existingAccount = await prisma.account.findUnique({
@@ -49,9 +50,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               session_state: account.session_state as string | null,
             },
           })
+          console.log("[AUTH] Updated existing account tokens")
         }
-      } catch (e) {
-        console.error("[AUTH] signIn callback error:", e)
+      } catch (e: any) {
+        console.error("[AUTH] signIn callback error:", e?.message || e)
       }
       return true
     },
@@ -77,22 +79,31 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
   logger: {
-    error(error) {
-      console.error("[AUTH ERROR]", JSON.stringify({
-        message: error.message,
-        name: error.name,
-        cause: error.cause ? String(error.cause) : undefined,
-        stack: error.stack?.split('\n').slice(0, 5).join('\n'),
+    error(error: any) {
+      const cause = error?.cause
+      let causeStr = "unknown"
+      if (cause instanceof Error) {
+        causeStr = JSON.stringify({ message: cause.message, name: cause.name, stack: cause.stack?.split('\n').slice(0, 3).join('\n') })
+      } else if (cause && typeof cause === 'object') {
+        try {
+          causeStr = JSON.stringify(cause, Object.getOwnPropertyNames(cause))
+        } catch {
+          causeStr = String(cause)
+        }
+      }
+      console.error("[AUTH ERROR FULL]", JSON.stringify({
+        message: error?.message,
+        name: error?.name,
+        cause: causeStr,
       }))
     },
-    warn(code) {
+    warn(code: any) {
       console.warn("[AUTH WARN]", code)
     },
-    debug(message, metadata) {
-      console.log("[AUTH DEBUG]", message, metadata ? JSON.stringify(metadata).slice(0, 200) : '')
+    debug(message: any, metadata: any) {
+      // skip verbose debug in production
     },
   },
-  debug: true,
   pages: {
     signIn: "/login",
     error: "/login",
