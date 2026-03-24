@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { createBookingSchema } from '@/lib/validators/booking'
-import { confirmBooking } from '@/lib/booking/confirm'
+import { confirmBooking, confirmGroupBooking } from '@/lib/booking/confirm'
 import { createAuthenticatedClient } from '@/lib/google/client'
 import { createCalendarEvent } from '@/lib/google/calendar'
 import { sendEmail } from '@/lib/mail/sender'
@@ -24,6 +24,18 @@ export async function POST(
           },
         },
       },
+      calendarGroups: {
+        include: {
+          members: {
+            include: {
+              connectedCalendar: {
+                include: { connectedGoogleAccount: true },
+              },
+            },
+          },
+        },
+        orderBy: { priorityOrder: 'asc' },
+      },
     },
   })
 
@@ -39,10 +51,38 @@ export async function POST(
   }
 
   try {
-    const booking = await confirmBooking({
-      schedulingPageId: page.id,
-      input: parsed.data,
-    })
+    // Check if calendarGroups exist and have members
+    const hasGroups =
+      page.calendarGroups.length > 0 &&
+      page.calendarGroups.some((g) => g.members.length > 0)
+
+    let booking
+
+    if (hasGroups) {
+      // Group-based booking
+      const allGroups = page.calendarGroups.map((g) => {
+        const representative = g.members.find((m) => m.isRepresentative)
+        return {
+          groupId: g.id,
+          priorityOrder: g.priorityOrder,
+          representativeCalendarId: representative?.connectedCalendarId,
+        }
+      })
+
+      booking = await confirmGroupBooking({
+        schedulingPageId: page.id,
+        input: parsed.data,
+        availableGroupIds: parsed.data.availableGroupIds,
+        allGroups,
+      })
+    } else {
+      // Fall back to existing calendar-target-based logic
+      booking = await confirmBooking({
+        schedulingPageId: page.id,
+        input: parsed.data,
+        availableCalendarIds: parsed.data.availableCalendarIds,
+      })
+    }
 
     // Create Google Calendar event
     if (booking.assignedConnectedCalendar) {

@@ -31,6 +31,12 @@ export default async function NewSchedulingPagePage() {
         <p className="text-gray-500 mt-1">新しい日程調整ページを作成します</p>
       </div>
       <SchedulingPageForm calendars={calendars} />
+      <div className="max-w-2xl rounded-xl border border-dashed border-gray-300 px-4 py-4">
+        <p className="text-sm text-gray-500">
+          <span className="font-medium text-gray-700">人格の設定</span>はページ作成後に行えます。
+          作成後、編集画面から人格（カレンダーグループ）を追加してください。
+        </p>
+      </div>
     </div>
   )
 }

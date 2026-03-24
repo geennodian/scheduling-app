@@ -8,6 +8,7 @@ export interface AvailabilitySlot {
   end: string    // ISO string
   date: string   // YYYY-MM-DD
   availableCalendarIds?: string[] // For ANY_FREE mode
+  availableGroupIds?: string[] // For group-based ANY_FREE mode
 }
 
 export interface AvailabilityRequest {
@@ -23,5 +24,12 @@ export interface AvailabilityRequest {
 
 export interface CalendarFreeIntervals {
   calendarId: string
+  freeIntervals: TimeInterval[]
+}
+
+export interface GroupFreeIntervals {
+  groupId: string
+  groupName: string
+  representativeCalendarId?: string // The calendar where events should be created
   freeIntervals: TimeInterval[]
 }

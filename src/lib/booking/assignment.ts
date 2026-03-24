@@ -46,3 +46,31 @@ export class RoundRobinStrategy implements AssignmentStrategy {
 export function getAssignmentStrategy(): AssignmentStrategy {
   return new FirstAvailableStrategy()
 }
+
+/** Strategy interface for assigning a group to a booking */
+export interface GroupAssignmentStrategy {
+  assign(
+    availableGroupIds: string[],
+    allGroups: { groupId: string; priorityOrder: number; representativeCalendarId?: string }[]
+  ): { groupId: string; calendarId: string | null } | null
+}
+
+/** Assign to the first available group by priority order */
+export class FirstAvailableGroupStrategy implements GroupAssignmentStrategy {
+  assign(
+    availableGroupIds: string[],
+    allGroups: { groupId: string; priorityOrder: number; representativeCalendarId?: string }[]
+  ): { groupId: string; calendarId: string | null } | null {
+    const sorted = [...allGroups].sort((a, b) => a.priorityOrder - b.priorityOrder)
+    for (const group of sorted) {
+      if (availableGroupIds.includes(group.groupId)) {
+        return { groupId: group.groupId, calendarId: group.representativeCalendarId || null }
+      }
+    }
+    return null
+  }
+}
+
+export function getGroupAssignmentStrategy(): GroupAssignmentStrategy {
+  return new FirstAvailableGroupStrategy()
+}

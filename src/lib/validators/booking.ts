@@ -8,6 +8,8 @@ export const createBookingSchema = z.object({
   email: z.string().email(),
   phone: z.string().max(20).optional(),
   note: z.string().max(2000).optional(),
+  availableCalendarIds: z.array(z.string()).optional(),
+  availableGroupIds: z.array(z.string()).optional(),
 })
 
 export const lockSlotSchema = z.object({

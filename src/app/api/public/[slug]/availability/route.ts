@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { createAuthenticatedClient } from '@/lib/google/client'
 import { queryFreeBusy } from '@/lib/google/freebusy'
-import { calculateAvailability } from '@/lib/availability/calculator'
+import { calculateAvailability, calculateGroupAvailability } from '@/lib/availability/calculator'
 import { generateAvailabilityWindows } from '@/lib/availability/window-generator'
 
 export async function GET(
@@ -20,6 +20,18 @@ export async function GET(
         include: {
           connectedCalendar: {
             include: { connectedGoogleAccount: true },
+          },
+        },
+        orderBy: { priorityOrder: 'asc' },
+      },
+      calendarGroups: {
+        include: {
+          members: {
+            include: {
+              connectedCalendar: {
+                include: { connectedGoogleAccount: true },
+              },
+            },
           },
         },
         orderBy: { priorityOrder: 'asc' },
@@ -52,37 +64,6 @@ export async function GET(
     })),
   })
 
-  // Get busy intervals from Google Calendar
-  const calendarBusyIntervals = new Map<string, { start: number; end: number }[]>()
-
-  for (const target of page.calendarTargets) {
-    const { connectedCalendar } = target
-    const { connectedGoogleAccount } = connectedCalendar
-
-    try {
-      const authClient = createAuthenticatedClient(
-        connectedGoogleAccount.accessToken,
-        connectedGoogleAccount.refreshToken,
-        connectedGoogleAccount.expiryDate
-      )
-
-      const busyMap = await queryFreeBusy(
-        authClient,
-        [connectedCalendar.calendarId],
-        startDate,
-        endDate,
-        page.timezone
-      )
-
-      const busyIntervals = busyMap.get(connectedCalendar.calendarId) || []
-      calendarBusyIntervals.set(connectedCalendar.id, busyIntervals)
-    } catch (error) {
-      console.error(`Failed to get busy intervals for calendar ${connectedCalendar.id}:`, error)
-      // Skip this calendar if API fails
-      calendarBusyIntervals.set(connectedCalendar.id, [])
-    }
-  }
-
   // Get existing bookings
   const existingBookings = await prisma.booking.findMany({
     where: {
@@ -102,26 +83,128 @@ export async function GET(
     },
   })
 
-  // Calculate availability
-  const slots = calculateAvailability({
-    calendarBusyIntervals,
-    availabilityWindows,
-    mode: page.mode,
-    slotMinutes: page.slotMinutes,
-    bufferBeforeMinutes: page.bufferBeforeMinutes,
-    bufferAfterMinutes: page.bufferAfterMinutes,
-    existingBookings: existingBookings.map((b: { startAt: Date; endAt: Date }) => ({
-      start: b.startAt.getTime(),
-      end: b.endAt.getTime(),
-    })),
-    existingLocks: activeLocks.map((l: { slotKey: string }) => {
-      const slotStart = new Date(l.slotKey).getTime()
-      return {
-        start: slotStart,
-        end: slotStart + page.slotMinutes * 60 * 1000,
-      }
-    }),
+  const bookingIntervals = existingBookings.map((b: { startAt: Date; endAt: Date }) => ({
+    start: b.startAt.getTime(),
+    end: b.endAt.getTime(),
+  }))
+
+  const lockIntervals = activeLocks.map((l: { slotKey: string }) => {
+    const slotStart = new Date(l.slotKey).getTime()
+    return {
+      start: slotStart,
+      end: slotStart + page.slotMinutes * 60 * 1000,
+    }
   })
+
+  // Check if calendarGroups exist and have members
+  const hasGroups =
+    page.calendarGroups.length > 0 &&
+    page.calendarGroups.some((g) => g.members.length > 0)
+
+  let slots
+
+  if (hasGroups) {
+    // Group-based availability calculation
+    const groupBusyIntervals = new Map<string, Map<string, { start: number; end: number }[]>>()
+
+    for (const group of page.calendarGroups) {
+      const calendarBusyMap = new Map<string, { start: number; end: number }[]>()
+
+      for (const member of group.members) {
+        const { connectedCalendar } = member
+        const { connectedGoogleAccount } = connectedCalendar
+
+        try {
+          const authClient = createAuthenticatedClient(
+            connectedGoogleAccount.accessToken,
+            connectedGoogleAccount.refreshToken,
+            connectedGoogleAccount.expiryDate
+          )
+
+          const busyMap = await queryFreeBusy(
+            authClient,
+            [connectedCalendar.calendarId],
+            startDate,
+            endDate,
+            page.timezone
+          )
+
+          const busyIntervals = busyMap.get(connectedCalendar.calendarId) || []
+          calendarBusyMap.set(connectedCalendar.id, busyIntervals)
+        } catch (error) {
+          console.error(
+            `Failed to get busy intervals for calendar ${connectedCalendar.id} in group ${group.id}:`,
+            error
+          )
+          calendarBusyMap.set(connectedCalendar.id, [])
+        }
+      }
+
+      groupBusyIntervals.set(group.id, calendarBusyMap)
+    }
+
+    const groupInfo = page.calendarGroups.map((g) => {
+      const representative = g.members.find((m) => m.isRepresentative)
+      return {
+        groupId: g.id,
+        groupName: g.name,
+        representativeCalendarId: representative?.connectedCalendarId,
+      }
+    })
+
+    slots = calculateGroupAvailability({
+      groupBusyIntervals,
+      groupInfo,
+      availabilityWindows,
+      mode: page.mode,
+      slotMinutes: page.slotMinutes,
+      bufferBeforeMinutes: page.bufferBeforeMinutes,
+      bufferAfterMinutes: page.bufferAfterMinutes,
+      existingBookings: bookingIntervals,
+      existingLocks: lockIntervals,
+    })
+  } else {
+    // Fall back to existing calendar-target-based logic
+    const calendarBusyIntervals = new Map<string, { start: number; end: number }[]>()
+
+    for (const target of page.calendarTargets) {
+      const { connectedCalendar } = target
+      const { connectedGoogleAccount } = connectedCalendar
+
+      try {
+        const authClient = createAuthenticatedClient(
+          connectedGoogleAccount.accessToken,
+          connectedGoogleAccount.refreshToken,
+          connectedGoogleAccount.expiryDate
+        )
+
+        const busyMap = await queryFreeBusy(
+          authClient,
+          [connectedCalendar.calendarId],
+          startDate,
+          endDate,
+          page.timezone
+        )
+
+        const busyIntervals = busyMap.get(connectedCalendar.calendarId) || []
+        calendarBusyIntervals.set(connectedCalendar.id, busyIntervals)
+      } catch (error) {
+        console.error(`Failed to get busy intervals for calendar ${connectedCalendar.id}:`, error)
+        calendarBusyIntervals.set(connectedCalendar.id, [])
+      }
+    }
+
+    slots = calculateAvailability({
+      calendarBusyIntervals,
+      availabilityWindows,
+      mode: page.mode,
+      slotMinutes: page.slotMinutes,
+      bufferBeforeMinutes: page.bufferBeforeMinutes,
+      bufferAfterMinutes: page.bufferAfterMinutes,
+      existingBookings: bookingIntervals,
+      existingLocks: lockIntervals,
+    })
+  }
 
   return NextResponse.json({
     page: {

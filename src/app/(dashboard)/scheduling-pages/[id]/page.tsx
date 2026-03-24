@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { redirect, notFound } from "next/navigation"
 import { SchedulingPageForm } from "@/components/dashboard/scheduling-page-form"
+import { CalendarGroupsManager } from "@/components/dashboard/calendar-groups-manager"
 
 export default async function EditSchedulingPagePage({
   params,
@@ -72,7 +73,7 @@ export default async function EditSchedulingPagePage({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">調整ページを編集</h1>
         <p className="text-gray-500 mt-1">{page.title}</p>
@@ -81,6 +82,11 @@ export default async function EditSchedulingPagePage({
         initialData={initialData}
         pageId={page.id}
         calendars={calendars}
+      />
+      <hr className="border-gray-200" />
+      <CalendarGroupsManager
+        schedulingPageId={page.id}
+        availableCalendars={calendars}
       />
     </div>
   )

@@ -88,6 +88,7 @@ model ConnectedCalendar {
   connectedGoogleAccount ConnectedGoogleAccount @relation(fields: [connectedGoogleAccountId], references: [id], onDelete: Cascade)
   schedulingPageTargets  SchedulingPageCalendarTarget[]
   assignedBookings       Booking[]
+  calendarGroupMembers   CalendarGroupMember[]
 
   @@unique([connectedGoogleAccountId, calendarId])
 }
@@ -115,6 +116,7 @@ model SchedulingPage {
   weekdayRules      SchedulingPageWeekdayRule[]
   timeRules         SchedulingPageTimeRule[]
   calendarTargets   SchedulingPageCalendarTarget[]
+  calendarGroups    CalendarGroup[]
   bookingFormSetting BookingFormSetting?
   bookings          Booking[]
   bookingLocks      BookingLock[]
@@ -162,6 +164,30 @@ model SchedulingPageCalendarTarget {
   @@unique([schedulingPageId, connectedCalendarId])
 }
 
+model CalendarGroup {
+  id               String   @id @default(cuid())
+  name             String
+  schedulingPageId String
+  priorityOrder    Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  schedulingPage SchedulingPage      @relation(fields: [schedulingPageId], references: [id], onDelete: Cascade)
+  members        CalendarGroupMember[]
+  assignedBookings Booking[]         @relation("bookingCalendarGroup")
+}
+
+model CalendarGroupMember {
+  id                  String @id @default(cuid())
+  calendarGroupId     String
+  connectedCalendarId String
+  isRepresentative    Boolean @default(false)
+
+  calendarGroup     CalendarGroup     @relation(fields: [calendarGroupId], references: [id], onDelete: Cascade)
+  connectedCalendar ConnectedCalendar @relation(fields: [connectedCalendarId], references: [id], onDelete: Cascade)
+
+  @@unique([calendarGroupId, connectedCalendarId])
+}
+
 model BookingFormSetting {
   id               String @id @default(cuid())
   schedulingPageId String @unique
@@ -178,6 +204,7 @@ model Booking {
   id                        String   @id @default(cuid())
   schedulingPageId          String
   assignedConnectedCalendarId String?
+  assignedCalendarGroupId   String?
   startAt                   DateTime
   endAt                     DateTime
   companyName               String?
@@ -193,6 +220,7 @@ model Booking {
 
   schedulingPage          SchedulingPage    @relation(fields: [schedulingPageId], references: [id], onDelete: Cascade)
   assignedConnectedCalendar ConnectedCalendar? @relation(fields: [assignedConnectedCalendarId], references: [id], onDelete: SetNull)
+  assignedCalendarGroup   CalendarGroup?    @relation("bookingCalendarGroup", fields: [assignedCalendarGroupId], references: [id], onDelete: SetNull)
 
   @@index([schedulingPageId, startAt, endAt])
 }

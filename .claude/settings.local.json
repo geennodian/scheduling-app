@@ -11,7 +11,26 @@
       "Bash(npm install:*)",
       "Bash(npx shadcn@latest init -d --style default --base-color neutral)",
       "Bash(npx shadcn@latest init -d)",
-      "Bash(npx --legacy-peer-deps shadcn@latest init -d)"
+      "Bash(npx --legacy-peer-deps shadcn@latest init -d)",
+      "Bash(npx --legacy-peer-deps shadcn@latest add card input label select textarea tabs badge dialog dropdown-menu separator toast calendar form checkbox switch avatar popover table scroll-area sheet)",
+      "Bash(npx --legacy-peer-deps shadcn@latest add sonner)",
+      "Bash(npx prisma:*)",
+      "Bash(npx shadcn@latest add card input label select textarea tabs badge dialog dropdown-menu separator calendar form checkbox switch avatar popover table scroll-area sheet --yes)",
+      "Bash(npx shadcn@latest add card input label select textarea tabs badge dialog dropdown-menu separator calendar form checkbox switch avatar popover table scroll-area sheet --yes --legacy-peer-deps)",
+      "Bash(npx --legacy-peer-deps shadcn@latest add card input label select textarea tabs badge dialog dropdown-menu separator calendar form checkbox switch avatar popover table scroll-area sheet --yes)",
+      "Bash(npx --legacy-peer-deps shadcn@latest add form tabs --yes --overwrite)",
+      "Bash(mkdir -p \"/Users/sugimuragen/Documents/ABH自動化/日程調整アプリ/src/app/\\(dashboard\\)/scheduling-pages/[id]\")",
+      "Bash(mkdir -p \"/Users/sugimuragen/Documents/ABH自動化/日程調整アプリ/src/app/\\(dashboard\\)/bookings/[id]\")",
+      "Bash(npx tsc:*)",
+      "Bash(node /Users/sugimuragen/Documents/ABH自動化/日程調整アプリ/node_modules/typescript/lib/tsc.js --noEmit)",
+      "Bash(npx --legacy-peer-deps prisma generate)",
+      "Bash(ls /Users/sugimuragen/Documents/ABH自動化/日程調整アプリ/src/app/\\\\\\(public\\\\\\)/)",
+      "Bash(npm test:*)",
+      "Bash(node -e \"const { PrismaClient } = require\\(''@prisma/client''\\); console.log\\(''OK''\\)\")",
+      "Bash(npm run:*)",
+      "Bash(node -e \"const pc = require\\(''@prisma/client''\\); console.log\\(Object.keys\\(pc\\).slice\\(0, 10\\)\\)\")",
+      "Bash(ls node_modules/@prisma/client/*.js)",
+      "Bash(ls node_modules/.prisma/client/index*)"
     ]
   }
 }
