@@ -24,7 +24,7 @@ export default async function DashboardPage() {
         orderBy: { startAt: "desc" },
         take: 5,
         include: {
-          schedulingPage: { select: { title: true } },
+          schedulingPage: { select: { title: true, timezone: true } },
         },
       }),
       prisma.booking.count({
@@ -113,6 +113,7 @@ export default async function DashboardPage() {
                         day: "2-digit",
                         hour: "2-digit",
                         minute: "2-digit",
+                        timeZone: booking.schedulingPage.timezone || "Asia/Tokyo",
                       })}
                     </p>
                   </div>

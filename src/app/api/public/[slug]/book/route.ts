@@ -85,12 +85,36 @@ export async function POST(
     }
 
     // Create Google Calendar event
-    console.log('[Book] assignedConnectedCalendar:', booking.assignedConnectedCalendarId, booking.assignedConnectedCalendar ? 'found' : 'null')
-    if (booking.assignedConnectedCalendar) {
+    // Resolve the connected calendar and Google account.
+    // booking.assignedConnectedCalendar comes from Prisma include, but when using
+    // groups the assigned calendar may not always be populated via the booking include.
+    // Fall back to looking it up from the page's calendarGroups or calendarTargets.
+    let resolvedCalendar = booking.assignedConnectedCalendar
+    if (!resolvedCalendar && booking.assignedConnectedCalendarId) {
+      console.log('[Book] assignedConnectedCalendar not included in booking, fetching from DB for calendarId:', booking.assignedConnectedCalendarId)
+      resolvedCalendar = await prisma.connectedCalendar.findUnique({
+        where: { id: booking.assignedConnectedCalendarId },
+        include: { connectedGoogleAccount: true },
+      })
+    }
+
+    console.log('[Book] Booking ID:', booking.id)
+    console.log('[Book] assignedConnectedCalendarId:', booking.assignedConnectedCalendarId, resolvedCalendar ? 'resolved' : 'null')
+    console.log('[Book] hasGroups:', hasGroups, 'assignedCalendarGroupId:', (booking as Record<string, unknown>).assignedCalendarGroupId ?? 'N/A')
+
+    if (resolvedCalendar) {
       try {
-        const { connectedGoogleAccount } = booking.assignedConnectedCalendar
-        console.log('[Book] Creating calendar event on:', booking.assignedConnectedCalendar.calendarId, 'via', connectedGoogleAccount.googleEmail)
-        console.log('[Book] Token expiry:', connectedGoogleAccount.expiryDate, 'now:', new Date().toISOString())
+        const { connectedGoogleAccount } = resolvedCalendar
+        const calendarId = resolvedCalendar.calendarId
+        const now = new Date()
+        const tokenExpiry = connectedGoogleAccount.expiryDate ? new Date(connectedGoogleAccount.expiryDate) : null
+        const isTokenExpired = tokenExpiry ? tokenExpiry < now : false
+
+        console.log('[Book] Creating calendar event on calendarId:', calendarId)
+        console.log('[Book] Google account:', connectedGoogleAccount.googleEmail, '(id:', connectedGoogleAccount.id, ')')
+        console.log('[Book] Token expiry:', connectedGoogleAccount.expiryDate, '| now:', now.toISOString(), '| expired:', isTokenExpired)
+        console.log('[Book] Has refresh token:', !!connectedGoogleAccount.refreshToken)
+
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
           connectedGoogleAccount.refreshToken,
@@ -100,7 +124,7 @@ export async function POST(
 
         const event = await createCalendarEvent(
           authClient,
-          booking.assignedConnectedCalendar.calendarId,
+          calendarId,
           {
             summary: `${page.title} - ${booking.personName}${booking.companyName ? ` (${booking.companyName})` : ''}`,
             description: `予約者: ${booking.personName}\nメール: ${booking.email}${booking.phone ? `\n電話: ${booking.phone}` : ''}${booking.note ? `\n備考: ${booking.note}` : ''}`,
@@ -111,23 +135,30 @@ export async function POST(
           }
         )
 
-        console.log('[Book] Calendar event created:', event.id)
+        console.log('[Book] Calendar event created successfully:', event.id, 'on calendar:', calendarId)
         // Save Google event ID
         await prisma.booking.update({
           where: { id: booking.id },
           data: { googleEventId: event.id },
         })
       } catch (error: unknown) {
-        const errObj = error as { response?: { data?: unknown }; message?: string; code?: number }
-        console.error('[Book] Failed to create calendar event:', {
+        const errObj = error as { response?: { data?: unknown; status?: number; statusText?: string }; message?: string; code?: string | number; errors?: unknown[] }
+        console.error('[Book] Failed to create calendar event for booking:', booking.id)
+        console.error('[Book] Calendar target:', resolvedCalendar.calendarId, 'via account:', resolvedCalendar.connectedGoogleAccount.googleEmail)
+        console.error('[Book] Error details:', JSON.stringify({
           message: errObj.message,
           code: errObj.code,
+          status: errObj.response?.status,
+          statusText: errObj.response?.statusText,
           responseData: errObj.response?.data,
+          errors: errObj.errors,
           stack: error instanceof Error ? error.stack : undefined,
-        })
+        }, null, 2))
       }
     } else {
-      console.warn('[Book] No assignedConnectedCalendar - skipping calendar event creation')
+      console.warn('[Book] No assignedConnectedCalendar resolved for booking:', booking.id)
+      console.warn('[Book] assignedConnectedCalendarId was:', booking.assignedConnectedCalendarId)
+      console.warn('[Book] Page has', page.calendarTargets.length, 'calendarTargets and', page.calendarGroups.length, 'calendarGroups')
     }
 
     // Send confirmation email to booker

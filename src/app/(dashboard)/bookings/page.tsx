@@ -26,18 +26,19 @@ export default async function BookingsPage() {
       schedulingPage: { userId: session.user.id },
     },
     include: {
-      schedulingPage: { select: { title: true } },
+      schedulingPage: { select: { title: true, timezone: true } },
     },
     orderBy: { startAt: "desc" },
   })
 
-  const formatDateTime = (date: Date) =>
+  const formatDateTime = (date: Date, timeZone?: string) =>
     new Date(date).toLocaleString("ja-JP", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
+      timeZone: timeZone || "Asia/Tokyo",
     })
 
   return (
@@ -70,7 +71,7 @@ export default async function BookingsPage() {
               {bookings.map((booking: typeof bookings[number]) => (
                 <TableRow key={booking.id}>
                   <TableCell className="whitespace-nowrap text-sm">
-                    {formatDateTime(booking.startAt)}
+                    {formatDateTime(booking.startAt, booking.schedulingPage.timezone)}
                   </TableCell>
                   <TableCell className="text-sm max-w-[150px] truncate">
                     {booking.schedulingPage.title}
