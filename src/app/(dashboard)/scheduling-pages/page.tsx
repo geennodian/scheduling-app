@@ -22,7 +22,7 @@ export default async function SchedulingPagesPage() {
     orderBy: { createdAt: "desc" },
   })
 
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
 
   const modeLabel = (mode: string) =>
     mode === "COMMON_FREE" ? "全員共通" : "誰か空き"
