@@ -9,6 +9,7 @@ interface BookingEmailData {
   organizerName?: string
   note?: string
   cancelUrl?: string
+  meetLink?: string
 }
 
 export function bookingConfirmationEmail(data: BookingEmailData): string {
@@ -25,6 +26,7 @@ export function bookingConfirmationEmail(data: BookingEmailData): string {
         ${data.companyName ? `<p><strong>会社名:</strong> ${data.companyName}</p>` : ''}
         <p><strong>お名前:</strong> ${data.personName}</p>
         ${data.note ? `<p><strong>備考:</strong> ${data.note}</p>` : ''}
+        ${data.meetLink ? `<p><strong>Google Meet:</strong> <a href="${data.meetLink}">${data.meetLink}</a></p>` : ''}
       </div>
 
       ${data.cancelUrl ? `<p><a href="${data.cancelUrl}" style="color: #dc2626;">予約をキャンセルする</a></p>` : ''}
@@ -46,6 +48,7 @@ export function bookingNotificationEmail(data: BookingEmailData & { email: strin
         <p><strong>メール:</strong> ${data.email}</p>
         ${data.phone ? `<p><strong>電話:</strong> ${data.phone}</p>` : ''}
         ${data.note ? `<p><strong>備考:</strong> ${data.note}</p>` : ''}
+        ${data.meetLink ? `<p><strong>Google Meet:</strong> <a href="${data.meetLink}">${data.meetLink}</a></p>` : ''}
       </div>
     </div>
   `

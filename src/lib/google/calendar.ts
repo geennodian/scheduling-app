@@ -29,24 +29,39 @@ export async function createCalendarEvent(
     end: Date
     timezone: string
     attendees?: { email: string }[]
+    addGoogleMeet?: boolean
   }
 ) {
   const calendar = google.calendar({ version: 'v3', auth: authClient })
+
+  const requestBody: Record<string, unknown> = {
+    summary: event.summary,
+    description: event.description,
+    start: {
+      dateTime: event.start.toISOString(),
+      timeZone: event.timezone,
+    },
+    end: {
+      dateTime: event.end.toISOString(),
+      timeZone: event.timezone,
+    },
+    attendees: event.attendees,
+  }
+
+  // Add Google Meet conference
+  if (event.addGoogleMeet) {
+    requestBody.conferenceData = {
+      createRequest: {
+        requestId: `meet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        conferenceSolutionKey: { type: 'hangoutsMeet' },
+      },
+    }
+  }
+
   const res = await calendar.events.insert({
     calendarId,
-    requestBody: {
-      summary: event.summary,
-      description: event.description,
-      start: {
-        dateTime: event.start.toISOString(),
-        timeZone: event.timezone,
-      },
-      end: {
-        dateTime: event.end.toISOString(),
-        timeZone: event.timezone,
-      },
-      attendees: event.attendees,
-    },
+    requestBody,
+    conferenceDataVersion: event.addGoogleMeet ? 1 : undefined,
   })
   return res.data
 }

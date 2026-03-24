@@ -142,11 +142,32 @@ export async function POST(
 
     console.log('[Book] Creating events on', calendarsToCreateEvent.length, 'calendars:', calendarsToCreateEvent.map(c => c.calendarId))
 
+    // Build attendees list: all participant calendars + booker
+    const allAttendeeEmails = calendarsToCreateEvent.map(c => c.calendarId)
+    allAttendeeEmails.push(booking.email)
+    const attendees = [...new Set(allAttendeeEmails)].map(email => ({ email }))
+
+    // Build participant names for event title
+    const participantNames = calendarsToCreateEvent.map(c => {
+      // Use the part before @ as display name
+      const name = c.calendarId.split('@')[0]
+      return name
+    })
+    const participantLabel = participantNames.join(' / ')
+
+    // Event summary includes participants
+    const eventSummary = `${page.title} - ${booking.personName}${booking.companyName ? ` (${booking.companyName})` : ''} [${participantLabel}]`
+
     const createdEventIds: string[] = []
-    for (const target of calendarsToCreateEvent) {
+    let meetLink: string | undefined
+
+    // Create event on first calendar with Google Meet, then on others without
+    for (let i = 0; i < calendarsToCreateEvent.length; i++) {
+      const target = calendarsToCreateEvent[i]
       try {
         const { connectedGoogleAccount } = target
-        console.log('[Book] Creating event on:', target.calendarId, 'via', connectedGoogleAccount.googleEmail)
+        const isFirst = i === 0
+        console.log('[Book] Creating event on:', target.calendarId, 'via', connectedGoogleAccount.googleEmail, isFirst ? '(with Meet)' : '')
 
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
@@ -155,17 +176,37 @@ export async function POST(
           connectedGoogleAccount.id
         )
 
+        const description = [
+          `予約者: ${booking.personName}`,
+          `メール: ${booking.email}`,
+          booking.phone ? `電話: ${booking.phone}` : '',
+          booking.note ? `備考: ${booking.note}` : '',
+          meetLink ? `\nGoogle Meet: ${meetLink}` : '',
+        ].filter(Boolean).join('\n')
+
         const event = await createCalendarEvent(authClient, target.calendarId, {
-          summary: `${page.title} - ${booking.personName}${booking.companyName ? ` (${booking.companyName})` : ''}`,
-          description: `予約者: ${booking.personName}\nメール: ${booking.email}${booking.phone ? `\n電話: ${booking.phone}` : ''}${booking.note ? `\n備考: ${booking.note}` : ''}`,
+          summary: eventSummary,
+          description,
           start: booking.startAt,
           end: booking.endAt,
           timezone: page.timezone,
-          attendees: [{ email: booking.email }],
+          attendees,
+          addGoogleMeet: isFirst, // Only first calendar creates Meet
         })
 
         console.log('[Book] Event created:', event.id, 'on', target.calendarId)
         if (event.id) createdEventIds.push(event.id)
+
+        // Capture Meet link from first event for subsequent events
+        if (isFirst && event.conferenceData?.entryPoints) {
+          const videoEntry = event.conferenceData.entryPoints.find(
+            (ep) => ep.entryPointType === 'video'
+          )
+          if (videoEntry?.uri) {
+            meetLink = videoEntry.uri
+            console.log('[Book] Meet link created:', meetLink)
+          }
+        }
       } catch (error: unknown) {
         const errObj = error as { response?: { data?: unknown; status?: number }; message?: string }
         console.error('[Book] Failed to create event on', target.calendarId, ':', errObj.message)
@@ -204,6 +245,7 @@ export async function POST(
         organizerName: page.organizerName || undefined,
         note: booking.note || undefined,
         cancelUrl,
+        meetLink,
       }),
     })
 
@@ -223,6 +265,7 @@ export async function POST(
           timezone: page.timezone,
           pageTitle: page.title,
           note: booking.note || undefined,
+          meetLink,
         }),
       })
     }
@@ -248,6 +291,7 @@ export async function POST(
             timezone: page.timezone,
             pageTitle: page.title,
             note: booking.note || undefined,
+            meetLink,
           }),
         })
         console.log('[Book] Notification sent to participant:', representativeEmail)
