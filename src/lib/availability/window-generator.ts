@@ -9,11 +9,10 @@ interface WindowGeneratorParams {
 }
 
 /**
- * Get the UTC offset in ms for a given timezone at a given date.
- * Uses Intl.DateTimeFormat to determine the local time in the target timezone.
+ * Parse a Date into its year/month/day/hour/minute/weekday components
+ * in a specific timezone using Intl.DateTimeFormat.
  */
-function getTimezoneOffsetMs(date: Date, timezone: string): number {
-  // Format the date parts in the target timezone
+function getPartsInTimezone(date: Date, timezone: string) {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     year: 'numeric',
@@ -23,76 +22,84 @@ function getTimezoneOffsetMs(date: Date, timezone: string): number {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
+    weekday: 'short',
   })
 
   const parts = formatter.formatToParts(date)
   const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value ?? '0', 10)
 
-  const year = get('year')
-  const month = get('month') - 1
-  const day = get('day')
-  let hour = get('hour')
-  if (hour === 24) hour = 0
-  const minute = get('minute')
-  const second = get('second')
-
-  // Create a UTC date representing "what the clock says" in the target timezone
-  const localAsUtc = Date.UTC(year, month, day, hour, minute, second)
-
-  // The offset = localAsUtc - actualUtc
-  return localAsUtc - date.getTime()
-}
-
-/**
- * Create a UTC timestamp for a specific time in a specific timezone.
- * E.g., "09:00" in "Asia/Tokyo" → the UTC timestamp when it's 9:00 AM in Tokyo.
- */
-function createDateInTimezone(
-  baseDate: Date,
-  hour: number,
-  minute: number,
-  timezone: string
-): Date {
-  // Get the date components in the target timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour12: false,
-  })
-  const parts = formatter.formatToParts(baseDate)
-  const get = (type: string) => parseInt(parts.find(p => p.type === type)?.value ?? '0', 10)
-
-  const year = get('year')
-  const month = get('month') - 1
-  const day = get('day')
-
-  // Create a date string in the target timezone and parse it
-  // Use a reference point to calculate offset
-  const refUtc = Date.UTC(year, month, day, hour, minute, 0, 0)
-
-  // Get the offset for this approximate time
-  const approxDate = new Date(refUtc)
-  const offset = getTimezoneOffsetMs(approxDate, timezone)
-
-  // The actual UTC time = refUtc - offset
-  return new Date(refUtc - offset)
-}
-
-/**
- * Get the day of week in a specific timezone.
- */
-function getDayOfWeekInTimezone(date: Date, timezone: string): number {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short',
-  })
-  const weekday = formatter.format(date)
+  const weekdayStr = parts.find(p => p.type === 'weekday')?.value ?? 'Sun'
   const dayMap: Record<string, number> = {
     Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
   }
-  return dayMap[weekday] ?? 0
+
+  let hour = get('hour')
+  if (hour === 24) hour = 0
+
+  return {
+    year: get('year'),
+    month: get('month') - 1, // 0-indexed
+    day: get('day'),
+    hour,
+    minute: get('minute'),
+    second: get('second'),
+    weekday: dayMap[weekdayStr] ?? 0,
+  }
+}
+
+/**
+ * Create a UTC timestamp for a specific time (hours:minutes) on a specific
+ * calendar date in the given timezone.
+ *
+ * For example: 2024-03-25 09:00 in Asia/Tokyo → the UTC ms when it is
+ * 09:00 on March 25 in Tokyo (i.e. 00:00 UTC).
+ *
+ * Approach:
+ *  1. Build a "naive UTC" timestamp: Date.UTC(year, month, day, hour, min).
+ *  2. Find the timezone offset at that approximate instant.
+ *  3. Subtract the offset to get the true UTC timestamp.
+ *  4. Verify the result lands on the right local time; if not (DST edge),
+ *     re-compute the offset at the corrected instant and adjust.
+ */
+function createTimestampInTimezone(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timezone: string
+): number {
+  // Step 1: naive UTC
+  const naiveUtc = Date.UTC(year, month, day, hour, minute, 0, 0)
+
+  // Step 2: offset at the naive point
+  const offset1 = computeOffsetMs(new Date(naiveUtc), timezone)
+
+  // Step 3: first estimate of true UTC
+  const estimate = naiveUtc - offset1
+
+  // Step 4: verify — recompute offset at the estimate
+  const offset2 = computeOffsetMs(new Date(estimate), timezone)
+  if (offset1 !== offset2) {
+    // DST transition edge case — use the second offset
+    return naiveUtc - offset2
+  }
+
+  return estimate
+}
+
+/**
+ * Compute the UTC offset in milliseconds for a timezone at a given instant.
+ * offset = localClockAsUtc - actualUtc
+ * A positive offset means the timezone is ahead of UTC.
+ */
+function computeOffsetMs(date: Date, timezone: string): number {
+  const parts = getPartsInTimezone(date, timezone)
+  const localAsUtc = Date.UTC(
+    parts.year, parts.month, parts.day,
+    parts.hour, parts.minute, parts.second
+  )
+  return localAsUtc - date.getTime()
 }
 
 /** Generate availability windows for the given date range, timezone-aware */
@@ -116,15 +123,30 @@ export function generateAvailabilityWindows(
     weekdayRules.forEach(r => { if (r.enabled) enabledWeekdays.add(r.weekday) })
   }
 
-  // Calculate total days to iterate
-  const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1
+  // Determine the date range in the target timezone.
+  // Get the calendar date of startDate and endDate in the target timezone,
+  // then iterate over each calendar day.
+  const startParts = getPartsInTimezone(startDate, timezone)
+  const endParts = getPartsInTimezone(endDate, timezone)
+
+  // Convert to simple day counts for iteration
+  // Use Date.UTC to create comparable day values (ignoring time)
+  const startDayUtc = Date.UTC(startParts.year, startParts.month, startParts.day)
+  const endDayUtc = Date.UTC(endParts.year, endParts.month, endParts.day)
+  const totalDays = Math.round((endDayUtc - startDayUtc) / (24 * 60 * 60 * 1000)) + 1
 
   for (let dayOffset = 0; dayOffset < totalDays; dayOffset++) {
-    // Create a reference point for this day (noon UTC to avoid DST edge cases)
-    const refDate = new Date(startDate.getTime() + dayOffset * 24 * 60 * 60 * 1000)
+    // Calculate the calendar date for this day in the target timezone
+    const dayMs = startDayUtc + dayOffset * 24 * 60 * 60 * 1000
+    const dayDate = new Date(dayMs)
+    const year = dayDate.getUTCFullYear()
+    const month = dayDate.getUTCMonth()
+    const day = dayDate.getUTCDate()
 
-    // Get the day of week in the target timezone
-    const dayOfWeek = getDayOfWeekInTimezone(refDate, timezone)
+    // Determine day of week for this calendar date in the target timezone.
+    // Since we constructed dayMs as Date.UTC(y, m, d), its UTC weekday
+    // matches the calendar date's weekday.
+    const dayOfWeek = dayDate.getUTCDay()
 
     if (!enabledWeekdays.has(dayOfWeek)) continue
 
@@ -132,13 +154,13 @@ export function generateAvailabilityWindows(
       const [startHour, startMin] = timeRule.startTime.split(':').map(Number)
       const [endHour, endMin] = timeRule.endTime.split(':').map(Number)
 
-      const windowStart = createDateInTimezone(refDate, startHour, startMin, timezone)
-      const windowEnd = createDateInTimezone(refDate, endHour, endMin, timezone)
+      const windowStart = createTimestampInTimezone(year, month, day, startHour, startMin, timezone)
+      const windowEnd = createTimestampInTimezone(year, month, day, endHour, endMin, timezone)
 
-      if (windowEnd.getTime() > windowStart.getTime()) {
+      if (windowEnd > windowStart) {
         windows.push({
-          start: windowStart.getTime(),
-          end: windowEnd.getTime(),
+          start: windowStart,
+          end: windowEnd,
         })
       }
     }

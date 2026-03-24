@@ -90,10 +90,12 @@ export async function POST(
       try {
         const { connectedGoogleAccount } = booking.assignedConnectedCalendar
         console.log('[Book] Creating calendar event on:', booking.assignedConnectedCalendar.calendarId, 'via', connectedGoogleAccount.googleEmail)
+        console.log('[Book] Token expiry:', connectedGoogleAccount.expiryDate, 'now:', new Date().toISOString())
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
           connectedGoogleAccount.refreshToken,
-          connectedGoogleAccount.expiryDate
+          connectedGoogleAccount.expiryDate,
+          connectedGoogleAccount.id
         )
 
         const event = await createCalendarEvent(
@@ -115,8 +117,14 @@ export async function POST(
           where: { id: booking.id },
           data: { googleEventId: event.id },
         })
-      } catch (error) {
-        console.error('[Book] Failed to create calendar event:', error)
+      } catch (error: unknown) {
+        const errObj = error as { response?: { data?: unknown }; message?: string; code?: number }
+        console.error('[Book] Failed to create calendar event:', {
+          message: errObj.message,
+          code: errObj.code,
+          responseData: errObj.response?.data,
+          stack: error instanceof Error ? error.stack : undefined,
+        })
       }
     } else {
       console.warn('[Book] No assignedConnectedCalendar - skipping calendar event creation')

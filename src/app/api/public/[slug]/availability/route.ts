@@ -118,7 +118,8 @@ export async function GET(
           const authClient = createAuthenticatedClient(
             connectedGoogleAccount.accessToken,
             connectedGoogleAccount.refreshToken,
-            connectedGoogleAccount.expiryDate
+            connectedGoogleAccount.expiryDate,
+            connectedGoogleAccount.id
           )
 
           const busyMap = await queryFreeBusy(
@@ -175,7 +176,8 @@ export async function GET(
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
           connectedGoogleAccount.refreshToken,
-          connectedGoogleAccount.expiryDate
+          connectedGoogleAccount.expiryDate,
+          connectedGoogleAccount.id
         )
 
         const busyMap = await queryFreeBusy(
