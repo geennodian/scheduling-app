@@ -1,5 +1,6 @@
 import { auth, signIn } from "@/lib/auth"
 import { redirect } from "next/navigation"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -29,6 +30,14 @@ export default async function LoginPage() {
               Googleアカウントでログイン
             </Button>
           </form>
+          <div className="mt-4 text-center">
+            <Link
+              href="/guide"
+              className="text-sm text-blue-600 hover:underline"
+            >
+              使い方ガイドはこちら
+            </Link>
+          </div>
         </CardContent>
       </Card>
     </div>
