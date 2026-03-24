@@ -92,7 +92,7 @@ export default async function SchedulingPagesPage() {
                     編集
                   </Button>
                 </Link>
-                <CopyUrlButton url={`${baseUrl}/p/${page.slug}`} />
+                <CopyUrlButton url={`${baseUrl}/book/${page.slug}`} />
               </CardFooter>
             </Card>
           ))}
