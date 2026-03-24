@@ -3,10 +3,8 @@ import Google from "next-auth/providers/google"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
 
-const adapter = PrismaAdapter(prisma)
-
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter,
+  adapter: PrismaAdapter(prisma),
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
@@ -29,8 +27,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     async signIn({ user, account }) {
       if (!account || !user.email) return false
-      
-      // Handle re-login: update existing account tokens
       try {
         const existingAccount = await prisma.account.findUnique({
           where: {
@@ -40,9 +36,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             },
           },
         })
-        
         if (existingAccount) {
-          // Update tokens for existing account
           await prisma.account.update({
             where: { id: existingAccount.id },
             data: {
@@ -57,16 +51,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           })
         }
       } catch (e) {
-        console.error("signIn callback error:", e)
+        console.error("[AUTH] signIn callback error:", e)
       }
-      
       return true
     },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id
       }
-      // If token.id is missing (e.g., returning user), look up by email
       if (!token.id && token.email) {
         const dbUser = await prisma.user.findUnique({
           where: { email: token.email },
@@ -84,6 +76,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return session
     },
   },
+  logger: {
+    error(error) {
+      console.error("[AUTH ERROR]", JSON.stringify({
+        message: error.message,
+        name: error.name,
+        cause: error.cause ? String(error.cause) : undefined,
+        stack: error.stack?.split('\n').slice(0, 5).join('\n'),
+      }))
+    },
+    warn(code) {
+      console.warn("[AUTH WARN]", code)
+    },
+    debug(message, metadata) {
+      console.log("[AUTH DEBUG]", message, metadata ? JSON.stringify(metadata).slice(0, 200) : '')
+    },
+  },
+  debug: true,
   pages: {
     signIn: "/login",
     error: "/login",
