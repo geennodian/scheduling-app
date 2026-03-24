@@ -60,8 +60,10 @@ export function AccountsClient({ accounts }: { accounts: ConnectedAccount[] }) {
 
   const handleDisconnect = async (account: ConnectedAccount) => {
     try {
-      const res = await fetch(`/api/google/disconnect/${account.id}`, {
-        method: "DELETE",
+      const res = await fetch("/api/google/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -78,10 +80,10 @@ export function AccountsClient({ accounts }: { accounts: ConnectedAccount[] }) {
   const handleToggleCalendar = async (calendarId: string, checked: boolean) => {
     setTogglingCalendar(calendarId)
     try {
-      const res = await fetch(`/api/google/calendars/${calendarId}`, {
+      const res = await fetch("/api/google/calendars", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedForAvailability: checked }),
+        body: JSON.stringify({ calendarId, selectedForAvailability: checked }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
