@@ -20,7 +20,8 @@ export interface Slot {
   start: string
   end: string
   date: string
-  availableCalendarIds: string[]
+  availableCalendarIds?: string[]
+  availableGroupIds?: string[]
 }
 
 export interface AvailabilityResponse {

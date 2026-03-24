@@ -106,6 +106,8 @@ export function BookingPage({ slug }: BookingPageProps) {
           email: formData.email,
           phone: formData.phone || undefined,
           note: formData.note || undefined,
+          availableCalendarIds: selectedSlot.availableCalendarIds,
+          availableGroupIds: selectedSlot.availableGroupIds,
         }),
       })
 

@@ -85,9 +85,11 @@ export async function POST(
     }
 
     // Create Google Calendar event
+    console.log('[Book] assignedConnectedCalendar:', booking.assignedConnectedCalendarId, booking.assignedConnectedCalendar ? 'found' : 'null')
     if (booking.assignedConnectedCalendar) {
       try {
         const { connectedGoogleAccount } = booking.assignedConnectedCalendar
+        console.log('[Book] Creating calendar event on:', booking.assignedConnectedCalendar.calendarId, 'via', connectedGoogleAccount.googleEmail)
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
           connectedGoogleAccount.refreshToken,
@@ -107,15 +109,17 @@ export async function POST(
           }
         )
 
+        console.log('[Book] Calendar event created:', event.id)
         // Save Google event ID
         await prisma.booking.update({
           where: { id: booking.id },
           data: { googleEventId: event.id },
         })
       } catch (error) {
-        console.error('Failed to create calendar event:', error)
-        // Don't fail the booking if calendar event fails
+        console.error('[Book] Failed to create calendar event:', error)
       }
+    } else {
+      console.warn('[Book] No assignedConnectedCalendar - skipping calendar event creation')
     }
 
     // Send confirmation email to booker
