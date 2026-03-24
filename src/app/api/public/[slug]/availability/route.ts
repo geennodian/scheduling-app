@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { createAuthenticatedClient } from '@/lib/google/client'
 import { queryFreeBusy } from '@/lib/google/freebusy'
-import { calculateAvailability, calculateGroupAvailability } from '@/lib/availability/calculator'
+import { calculateGroupAvailability } from '@/lib/availability/calculator'
 import { generateAvailabilityWindows } from '@/lib/availability/window-generator'
 
 export async function GET(
@@ -96,82 +96,72 @@ export async function GET(
     }
   })
 
-  // Check if calendarGroups exist and have members
-  const hasGroups =
-    page.calendarGroups.length > 0 &&
-    page.calendarGroups.some((g) => g.members.length > 0)
+  // Build unified persona list from groups + ungrouped targets
+  interface Persona {
+    id: string           // group ID or "auto_" + calendarId
+    name: string
+    representativeCalendarId?: string
+    calendars: { connectedCalendar: typeof page.calendarTargets[number]['connectedCalendar']; connectedGoogleAccount: typeof page.calendarTargets[number]['connectedCalendar']['connectedGoogleAccount'] }[]
+  }
+
+  const personas: Persona[] = []
+
+  // 1. Add explicit CalendarGroups as personas
+  const groupedCalendarIds = new Set<string>()
+  for (const group of page.calendarGroups) {
+    if (group.members.length === 0) continue
+    const representative = group.members.find((m) => m.isRepresentative)
+    personas.push({
+      id: group.id,
+      name: group.name,
+      representativeCalendarId: representative?.connectedCalendarId,
+      calendars: group.members.map((m) => ({
+        connectedCalendar: m.connectedCalendar,
+        connectedGoogleAccount: m.connectedCalendar.connectedGoogleAccount,
+      })),
+    })
+    group.members.forEach((m) => groupedCalendarIds.add(m.connectedCalendarId))
+  }
+
+  // 2. Add ungrouped calendarTargets as auto-personas
+  for (const target of page.calendarTargets) {
+    if (groupedCalendarIds.has(target.connectedCalendarId)) continue
+    const cal = target.connectedCalendar
+    personas.push({
+      id: `auto_${cal.id}`,
+      name: cal.calendarName || cal.calendarId,
+      representativeCalendarId: cal.id,
+      calendars: [{
+        connectedCalendar: cal,
+        connectedGoogleAccount: cal.connectedGoogleAccount,
+      }],
+    })
+  }
+
+  console.log('[Availability] Personas:', personas.map((p) => p.name))
 
   let slots
 
-  if (hasGroups) {
-    // Group-based availability calculation
-    const groupBusyIntervals = new Map<string, Map<string, { start: number; end: number }[]>>()
-
-    for (const group of page.calendarGroups) {
-      const calendarBusyMap = new Map<string, { start: number; end: number }[]>()
-
-      for (const member of group.members) {
-        const { connectedCalendar } = member
-        const { connectedGoogleAccount } = connectedCalendar
-
-        try {
-          const authClient = createAuthenticatedClient(
-            connectedGoogleAccount.accessToken,
-            connectedGoogleAccount.refreshToken,
-            connectedGoogleAccount.expiryDate,
-            connectedGoogleAccount.id
-          )
-
-          const busyMap = await queryFreeBusy(
-            authClient,
-            [connectedCalendar.calendarId],
-            startDate,
-            endDate,
-            page.timezone
-          )
-
-          const busyIntervals = busyMap.get(connectedCalendar.calendarId) || []
-          calendarBusyMap.set(connectedCalendar.id, busyIntervals)
-        } catch (error) {
-          console.error(
-            `Failed to get busy intervals for calendar ${connectedCalendar.id} in group ${group.id}:`,
-            error
-          )
-          calendarBusyMap.set(connectedCalendar.id, [])
-        }
-      }
-
-      groupBusyIntervals.set(group.id, calendarBusyMap)
-    }
-
-    const groupInfo = page.calendarGroups.map((g) => {
-      const representative = g.members.find((m) => m.isRepresentative)
-      return {
-        groupId: g.id,
-        groupName: g.name,
-        representativeCalendarId: representative?.connectedCalendarId,
-      }
+  if (personas.length === 0) {
+    return NextResponse.json({
+      page: {
+        title: page.title,
+        description: page.description,
+        organizerName: page.organizerName,
+        timezone: page.timezone,
+        slotMinutes: page.slotMinutes,
+        mode: page.mode,
+      },
+      slots: [],
     })
+  }
 
-    slots = calculateGroupAvailability({
-      groupBusyIntervals,
-      groupInfo,
-      availabilityWindows,
-      mode: page.mode,
-      slotMinutes: page.slotMinutes,
-      bufferBeforeMinutes: page.bufferBeforeMinutes,
-      bufferAfterMinutes: page.bufferAfterMinutes,
-      existingBookings: bookingIntervals,
-      existingLocks: lockIntervals,
-    })
-  } else {
-    // Fall back to existing calendar-target-based logic
-    const calendarBusyIntervals = new Map<string, { start: number; end: number }[]>()
+  // 3. Fetch busy intervals for each persona
+  const groupBusyIntervals = new Map<string, Map<string, { start: number; end: number }[]>>()
 
-    for (const target of page.calendarTargets) {
-      const { connectedCalendar } = target
-      const { connectedGoogleAccount } = connectedCalendar
-
+  for (const persona of personas) {
+    const calendarBusyMap = new Map<string, { start: number; end: number }[]>()
+    for (const { connectedCalendar, connectedGoogleAccount } of persona.calendars) {
       try {
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
@@ -179,7 +169,6 @@ export async function GET(
           connectedGoogleAccount.expiryDate,
           connectedGoogleAccount.id
         )
-
         const busyMap = await queryFreeBusy(
           authClient,
           [connectedCalendar.calendarId],
@@ -187,26 +176,33 @@ export async function GET(
           endDate,
           page.timezone
         )
-
-        const busyIntervals = busyMap.get(connectedCalendar.calendarId) || []
-        calendarBusyIntervals.set(connectedCalendar.id, busyIntervals)
+        calendarBusyMap.set(connectedCalendar.id, busyMap.get(connectedCalendar.calendarId) || [])
       } catch (error) {
-        console.error(`Failed to get busy intervals for calendar ${connectedCalendar.id}:`, error)
-        calendarBusyIntervals.set(connectedCalendar.id, [])
+        console.error(`Failed to get busy for ${connectedCalendar.calendarId}:`, error)
+        calendarBusyMap.set(connectedCalendar.id, [])
       }
     }
-
-    slots = calculateAvailability({
-      calendarBusyIntervals,
-      availabilityWindows,
-      mode: page.mode,
-      slotMinutes: page.slotMinutes,
-      bufferBeforeMinutes: page.bufferBeforeMinutes,
-      bufferAfterMinutes: page.bufferAfterMinutes,
-      existingBookings: bookingIntervals,
-      existingLocks: lockIntervals,
-    })
+    groupBusyIntervals.set(persona.id, calendarBusyMap)
   }
+
+  // 4. Calculate using group availability (which unions within each persona)
+  const groupInfo = personas.map((p) => ({
+    groupId: p.id,
+    groupName: p.name,
+    representativeCalendarId: p.representativeCalendarId,
+  }))
+
+  slots = calculateGroupAvailability({
+    groupBusyIntervals,
+    groupInfo,
+    availabilityWindows,
+    mode: page.mode,
+    slotMinutes: page.slotMinutes,
+    bufferBeforeMinutes: page.bufferBeforeMinutes,
+    bufferAfterMinutes: page.bufferAfterMinutes,
+    existingBookings: bookingIntervals,
+    existingLocks: lockIntervals,
+  })
 
   return NextResponse.json({
     page: {

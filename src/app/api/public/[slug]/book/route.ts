@@ -51,24 +51,40 @@ export async function POST(
   }
 
   try {
-    // Check if calendarGroups exist and have members
-    const hasGroups =
-      page.calendarGroups.length > 0 &&
-      page.calendarGroups.some((g) => g.members.length > 0)
+    // Build unified persona list (same logic as availability route)
+    const groupedCalendarIds = new Set<string>()
+    const allGroups: { groupId: string; priorityOrder: number; representativeCalendarId?: string }[] = []
+
+    for (const group of page.calendarGroups) {
+      if (group.members.length === 0) continue
+      const representative = group.members.find((m) => m.isRepresentative)
+      allGroups.push({
+        groupId: group.id,
+        priorityOrder: group.priorityOrder,
+        representativeCalendarId: representative?.connectedCalendarId,
+      })
+      group.members.forEach((m) => groupedCalendarIds.add(m.connectedCalendarId))
+    }
+
+    // Add ungrouped calendarTargets as auto-personas
+    let autoPersonaIndex = 0
+    for (const target of page.calendarTargets) {
+      if (groupedCalendarIds.has(target.connectedCalendarId)) continue
+      const cal = target.connectedCalendar
+      allGroups.push({
+        groupId: `auto_${cal.id}`,
+        priorityOrder: 1000 + autoPersonaIndex, // auto-personas have lower priority than explicit groups
+        representativeCalendarId: cal.id,
+      })
+      autoPersonaIndex++
+    }
+
+    console.log('[Book] Personas:', allGroups.map((g) => g.groupId))
 
     let booking
 
-    if (hasGroups) {
-      // Group-based booking
-      const allGroups = page.calendarGroups.map((g) => {
-        const representative = g.members.find((m) => m.isRepresentative)
-        return {
-          groupId: g.id,
-          priorityOrder: g.priorityOrder,
-          representativeCalendarId: representative?.connectedCalendarId,
-        }
-      })
-
+    if (allGroups.length > 0) {
+      // Use group booking for all personas (both explicit groups and auto-personas)
       booking = await confirmGroupBooking({
         schedulingPageId: page.id,
         input: parsed.data,
@@ -76,7 +92,7 @@ export async function POST(
         allGroups,
       })
     } else {
-      // Fall back to existing calendar-target-based logic
+      // No groups and no targets - fall back to basic booking
       booking = await confirmBooking({
         schedulingPageId: page.id,
         input: parsed.data,
@@ -84,36 +100,53 @@ export async function POST(
       })
     }
 
-    // Create Google Calendar event
-    // Resolve the connected calendar and Google account.
-    // booking.assignedConnectedCalendar comes from Prisma include, but when using
-    // groups the assigned calendar may not always be populated via the booking include.
-    // Fall back to looking it up from the page's calendarGroups or calendarTargets.
-    let resolvedCalendar = booking.assignedConnectedCalendar
-    if (!resolvedCalendar && booking.assignedConnectedCalendarId) {
-      console.log('[Book] assignedConnectedCalendar not included in booking, fetching from DB for calendarId:', booking.assignedConnectedCalendarId)
-      resolvedCalendar = await prisma.connectedCalendar.findUnique({
-        where: { id: booking.assignedConnectedCalendarId },
-        include: { connectedGoogleAccount: true },
-      })
+    // --- Google Calendar event creation ---
+    // COMMON_FREE: create event on ALL personas' representative calendars (everyone participates)
+    // ANY_FREE: create event only on the assigned persona's representative calendar
+    console.log('[Book] Booking ID:', booking.id, '| Mode:', page.mode, '| Personas:', allGroups.length)
+
+    // Collect all representative calendars to create events on
+    const calendarsToCreateEvent: { calendarId: string; connectedGoogleAccount: { id: string; googleEmail: string; accessToken: string; refreshToken: string; expiryDate: Date | null } }[] = []
+
+    if (page.mode === 'COMMON_FREE') {
+      // COMMON_FREE: all personas participate, so add event to ALL representative calendars
+      for (const persona of allGroups) {
+        if (!persona.representativeCalendarId) continue
+        const cal = await prisma.connectedCalendar.findUnique({
+          where: { id: persona.representativeCalendarId },
+          include: { connectedGoogleAccount: true },
+        })
+        if (cal) {
+          calendarsToCreateEvent.push({
+            calendarId: cal.calendarId,
+            connectedGoogleAccount: cal.connectedGoogleAccount,
+          })
+        }
+      }
+    } else {
+      // ANY_FREE: only the assigned persona's calendar
+      let resolvedCalendar = booking.assignedConnectedCalendar
+      if (!resolvedCalendar && booking.assignedConnectedCalendarId) {
+        resolvedCalendar = await prisma.connectedCalendar.findUnique({
+          where: { id: booking.assignedConnectedCalendarId },
+          include: { connectedGoogleAccount: true },
+        })
+      }
+      if (resolvedCalendar) {
+        calendarsToCreateEvent.push({
+          calendarId: resolvedCalendar.calendarId,
+          connectedGoogleAccount: resolvedCalendar.connectedGoogleAccount,
+        })
+      }
     }
 
-    console.log('[Book] Booking ID:', booking.id)
-    console.log('[Book] assignedConnectedCalendarId:', booking.assignedConnectedCalendarId, resolvedCalendar ? 'resolved' : 'null')
-    console.log('[Book] hasGroups:', hasGroups, 'assignedCalendarGroupId:', (booking as Record<string, unknown>).assignedCalendarGroupId ?? 'N/A')
+    console.log('[Book] Creating events on', calendarsToCreateEvent.length, 'calendars:', calendarsToCreateEvent.map(c => c.calendarId))
 
-    if (resolvedCalendar) {
+    const createdEventIds: string[] = []
+    for (const target of calendarsToCreateEvent) {
       try {
-        const { connectedGoogleAccount } = resolvedCalendar
-        const calendarId = resolvedCalendar.calendarId
-        const now = new Date()
-        const tokenExpiry = connectedGoogleAccount.expiryDate ? new Date(connectedGoogleAccount.expiryDate) : null
-        const isTokenExpired = tokenExpiry ? tokenExpiry < now : false
-
-        console.log('[Book] Creating calendar event on calendarId:', calendarId)
-        console.log('[Book] Google account:', connectedGoogleAccount.googleEmail, '(id:', connectedGoogleAccount.id, ')')
-        console.log('[Book] Token expiry:', connectedGoogleAccount.expiryDate, '| now:', now.toISOString(), '| expired:', isTokenExpired)
-        console.log('[Book] Has refresh token:', !!connectedGoogleAccount.refreshToken)
+        const { connectedGoogleAccount } = target
+        console.log('[Book] Creating event on:', target.calendarId, 'via', connectedGoogleAccount.googleEmail)
 
         const authClient = createAuthenticatedClient(
           connectedGoogleAccount.accessToken,
@@ -122,46 +155,33 @@ export async function POST(
           connectedGoogleAccount.id
         )
 
-        const event = await createCalendarEvent(
-          authClient,
-          calendarId,
-          {
-            summary: `${page.title} - ${booking.personName}${booking.companyName ? ` (${booking.companyName})` : ''}`,
-            description: `予約者: ${booking.personName}\nメール: ${booking.email}${booking.phone ? `\n電話: ${booking.phone}` : ''}${booking.note ? `\n備考: ${booking.note}` : ''}`,
-            start: booking.startAt,
-            end: booking.endAt,
-            timezone: page.timezone,
-            attendees: [{ email: booking.email }],
-          }
-        )
-
-        console.log('[Book] Calendar event created successfully:', event.id, 'on calendar:', calendarId)
-        // Save Google event ID
-        await prisma.booking.update({
-          where: { id: booking.id },
-          data: { googleEventId: event.id },
+        const event = await createCalendarEvent(authClient, target.calendarId, {
+          summary: `${page.title} - ${booking.personName}${booking.companyName ? ` (${booking.companyName})` : ''}`,
+          description: `予約者: ${booking.personName}\nメール: ${booking.email}${booking.phone ? `\n電話: ${booking.phone}` : ''}${booking.note ? `\n備考: ${booking.note}` : ''}`,
+          start: booking.startAt,
+          end: booking.endAt,
+          timezone: page.timezone,
+          attendees: [{ email: booking.email }],
         })
+
+        console.log('[Book] Event created:', event.id, 'on', target.calendarId)
+        if (event.id) createdEventIds.push(event.id)
       } catch (error: unknown) {
-        const errObj = error as { response?: { data?: unknown; status?: number; statusText?: string }; message?: string; code?: string | number; errors?: unknown[] }
-        console.error('[Book] Failed to create calendar event for booking:', booking.id)
-        console.error('[Book] Calendar target:', resolvedCalendar.calendarId, 'via account:', resolvedCalendar.connectedGoogleAccount.googleEmail)
-        console.error('[Book] Error details:', JSON.stringify({
-          message: errObj.message,
-          code: errObj.code,
-          status: errObj.response?.status,
-          statusText: errObj.response?.statusText,
-          responseData: errObj.response?.data,
-          errors: errObj.errors,
-          stack: error instanceof Error ? error.stack : undefined,
-        }, null, 2))
+        const errObj = error as { response?: { data?: unknown; status?: number }; message?: string }
+        console.error('[Book] Failed to create event on', target.calendarId, ':', errObj.message)
+        if (errObj.response) console.error('[Book] Status:', errObj.response.status, JSON.stringify(errObj.response.data))
       }
-    } else {
-      console.warn('[Book] No assignedConnectedCalendar resolved for booking:', booking.id)
-      console.warn('[Book] assignedConnectedCalendarId was:', booking.assignedConnectedCalendarId)
-      console.warn('[Book] Page has', page.calendarTargets.length, 'calendarTargets and', page.calendarGroups.length, 'calendarGroups')
     }
 
-    // Send confirmation email to booker
+    // Save first event ID to booking record
+    if (createdEventIds.length > 0) {
+      await prisma.booking.update({
+        where: { id: booking.id },
+        data: { googleEventId: createdEventIds.join(',') },
+      })
+    }
+
+    // --- Email notifications ---
     const startDate = booking.startAt.toLocaleDateString('ja-JP', { timeZone: page.timezone })
     const startTime = booking.startAt.toLocaleTimeString('ja-JP', { timeZone: page.timezone, hour: '2-digit', minute: '2-digit' })
     const endTime = booking.endAt.toLocaleTimeString('ja-JP', { timeZone: page.timezone, hour: '2-digit', minute: '2-digit' })
@@ -169,6 +189,7 @@ export async function POST(
       ? `${process.env.NEXT_PUBLIC_APP_URL}/api/bookings/${booking.id}/cancel?token=${booking.cancelToken}`
       : undefined
 
+    // Send confirmation email to booker
     await sendEmail({
       to: booking.email,
       subject: `【予約確定】${page.title}`,
@@ -204,6 +225,33 @@ export async function POST(
           note: booking.note || undefined,
         }),
       })
+    }
+
+    // COMMON_FREE: also notify all persona representative emails (participants)
+    if (page.mode === 'COMMON_FREE') {
+      const notifiedEmails = new Set<string>([booking.email, page.user.email || ''])
+      for (const target of calendarsToCreateEvent) {
+        const representativeEmail = target.calendarId // calendar ID is often the email
+        if (notifiedEmails.has(representativeEmail)) continue
+        notifiedEmails.add(representativeEmail)
+        await sendEmail({
+          to: representativeEmail,
+          subject: `【新規予約】${page.title} - ${booking.personName}`,
+          html: bookingNotificationEmail({
+            personName: booking.personName,
+            companyName: booking.companyName || undefined,
+            email: booking.email,
+            phone: booking.phone || undefined,
+            date: startDate,
+            startTime,
+            endTime,
+            timezone: page.timezone,
+            pageTitle: page.title,
+            note: booking.note || undefined,
+          }),
+        })
+        console.log('[Book] Notification sent to participant:', representativeEmail)
+      }
     }
 
     return NextResponse.json({
