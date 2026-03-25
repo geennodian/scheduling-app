@@ -270,8 +270,9 @@ export async function POST(
       })
     }
 
-    // COMMON_FREE: also notify all persona representative emails (participants)
-    if (page.mode === 'COMMON_FREE') {
+    // Notify all persona representative emails (participants)
+    // COMMON_FREE: all participants, ANY_FREE: assigned participant
+    {
       const notifiedEmails = new Set<string>([booking.email, page.user.email || ''])
       for (const target of calendarsToCreateEvent) {
         const representativeEmail = target.calendarId // calendar ID is often the email
