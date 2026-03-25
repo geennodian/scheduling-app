@@ -191,13 +191,14 @@ export async function confirmGroupBooking(params: ConfirmGroupBookingParams) {
     const strategy = getGroupAssignmentStrategy()
     const result = strategy.assign(availableGroupIds, allGroups)
     if (result) {
-      assignedCalendarGroupId = result.groupId
+      // Auto-personas (id starts with "auto_") are virtual - don't save as FK
+      assignedCalendarGroupId = result.groupId.startsWith('auto_') ? null : result.groupId
       assignedCalendarId = result.calendarId
     }
   } else if (allGroups.length > 0) {
     // COMMON_FREE: use first group by priority as representative
     const sorted = [...allGroups].sort((a, b) => a.priorityOrder - b.priorityOrder)
-    assignedCalendarGroupId = sorted[0].groupId
+    assignedCalendarGroupId = sorted[0].groupId.startsWith('auto_') ? null : sorted[0].groupId
     assignedCalendarId = sorted[0].representativeCalendarId || null
   }
 
