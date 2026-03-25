@@ -1,5 +1,11 @@
 import { TimeInterval, AvailabilitySlot } from './types'
 
+/** Round up a timestamp to the next slot boundary */
+function ceilToSlotBoundary(timestamp: number, slotMs: number): number {
+  const remainder = timestamp % slotMs
+  return remainder === 0 ? timestamp : timestamp + (slotMs - remainder)
+}
+
 /** Generate time slots from free intervals */
 export function generateSlots(
   freeIntervals: TimeInterval[],
@@ -10,7 +16,8 @@ export function generateSlots(
   const slots: AvailabilitySlot[] = []
 
   for (const interval of freeIntervals) {
-    let slotStart = interval.start
+    // Round up start to next clean slot boundary to avoid :10:49 etc
+    let slotStart = ceilToSlotBoundary(interval.start, slotMs)
     while (slotStart + slotMs <= interval.end) {
       const slotEnd = slotStart + slotMs
       const startDate = new Date(slotStart)

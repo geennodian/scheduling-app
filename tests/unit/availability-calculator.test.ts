@@ -314,7 +314,7 @@ describe('calculateAvailability - different slot durations', () => {
   it('should generate 120-minute slots correctly', () => {
     const params = makeParams({
       calendarBusyIntervals: new Map([['cal-a', []]]),
-      availabilityWindows: [interval(9, 17)],
+      availabilityWindows: [interval(0, 8)], // 8h window aligned to slot boundary
       slotMinutes: 120,
     })
     const slots = calculateAvailability(params)
