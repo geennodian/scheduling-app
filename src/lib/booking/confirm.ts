@@ -13,6 +13,11 @@ interface ConfirmBookingParams {
 export async function confirmBooking(params: ConfirmBookingParams) {
   const { schedulingPageId, input, availableCalendarIds } = params
 
+  // Reject past slots
+  if (new Date(input.slotStart).getTime() < Date.now()) {
+    throw new Error('過去の日時は予約できません')
+  }
+
   const schedulingPage = await prisma.schedulingPage.findUnique({
     where: { id: schedulingPageId },
     include: {
@@ -122,6 +127,11 @@ interface ConfirmGroupBookingParams {
 
 export async function confirmGroupBooking(params: ConfirmGroupBookingParams) {
   const { schedulingPageId, input, availableGroupIds, allGroups } = params
+
+  // Reject past slots
+  if (new Date(input.slotStart).getTime() < Date.now()) {
+    throw new Error('過去の日時は予約できません')
+  }
 
   const schedulingPage = await prisma.schedulingPage.findUnique({
     where: { id: schedulingPageId },
