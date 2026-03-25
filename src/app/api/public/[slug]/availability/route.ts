@@ -64,13 +64,15 @@ export async function GET(
     })),
   })
 
-  // Get existing bookings
+  // Get existing bookings - use overlap query to catch all bookings in range
+  const rangeEnd = new Date(endDate)
+  rangeEnd.setHours(23, 59, 59, 999) // Extend to end of last day
   const existingBookings = await prisma.booking.findMany({
     where: {
       schedulingPageId: page.id,
       status: 'CONFIRMED',
-      startAt: { gte: startDate },
-      endAt: { lte: endDate },
+      startAt: { lt: rangeEnd },
+      endAt: { gt: startDate },
     },
     select: { startAt: true, endAt: true },
   })
